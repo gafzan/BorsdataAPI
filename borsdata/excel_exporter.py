@@ -1,7 +1,10 @@
-from borsdata.borsdata_api import *
+"""excel_exporter.py"""
+
 import pandas as pd
 import os
 import datetime as dt
+
+from borsdata.borsdata_api import BorsdataAPI
 from borsdata import constants as constants
 
 
@@ -11,7 +14,7 @@ class ExcelExporter:
     instrument data into excel-files.
     """
     def __init__(self):
-        self._api = BorsdataAPI(constants.API_KEY)
+        self._api = BorsdataAPI()
         self._instruments = self._api.get_instruments()
         self._markets = self._api.get_markets()
         self._countries = self._api.get_countries()
