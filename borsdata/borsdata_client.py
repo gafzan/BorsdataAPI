@@ -1,15 +1,15 @@
-# importing the borsdata_api
-from borsdata_api import BorsdataAPI
-# pandas is a data-analysis library for python (data frames)
-import pandas as pd
-# matplotlib for visual-presentations (plots)
-import matplotlib.pylab as plt
-# datetime for date- and time-stuff
-import datetime as dt
-# user constants
-from borsdata import constants as constants
+"""borsdata_client.py"""
+
+import pandas as pd  # pandas is a data-analysis library for python (data frames)
 import numpy as np
+import matplotlib.pylab as plt  # matplotlib for visual-presentations (plots)
+import datetime as dt  # datetime for date- and time-stuff
+
 import os
+
+from borsdata.borsdata_api import BorsdataAPI
+from borsdata import constants as constants  # user constants
+
 
 # pandas options for string representation of data frames (print)
 pd.set_option('display.max_columns', None)
@@ -18,7 +18,7 @@ pd.set_option('display.max_rows', None)
 
 class BorsdataClient:
     def __init__(self):
-        self._borsdata_api = BorsdataAPI(constants.API_KEY)
+        self._borsdata_api = BorsdataAPI()
         self._instruments_with_meta_data = pd.DataFrame()
 
     def instruments_with_meta_data(self):
@@ -30,7 +30,7 @@ class BorsdataClient:
         if len(self._instruments_with_meta_data) > 0:
             return self._instruments_with_meta_data
         else:
-            self._borsdata_api = BorsdataAPI(constants.API_KEY)
+            self._borsdata_api = BorsdataAPI()
             # fetching data from api
             countries = self._borsdata_api.get_countries()
             branches = self._borsdata_api.get_branches()

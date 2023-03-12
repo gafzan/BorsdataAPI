@@ -1,5 +1,2 @@
-"""
-User constants
-"""
-API_KEY = 'xxxx'
+"""constants.py"""
 EXPORT_PATH = 'file_exports/'

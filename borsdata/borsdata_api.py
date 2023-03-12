@@ -1,16 +1,24 @@
+"""borsdata_api.py"""
+
 import requests
 import pandas as pd
 import time
-from borsdata import constants as constants
+
+import os
 
 # pandas options for string representation of data frames (print)
 pd.set_option("display.max_columns", None)
 pd.set_option("display.max_rows", None)
 
+BORSDATA_API_KEY = os.environ.get('BORSDATA_API_KEY', None)
+
 
 class BorsdataAPI:
-    def __init__(self, _api_key):
-        self._api_key = _api_key
+    def __init__(self):
+        if BORSDATA_API_KEY:
+            self._api_key = BORSDATA_API_KEY
+        else:
+            raise ValueError("please store your Borsdata API key as an environmental variable named 'BORSDATA_API_KEY'")
         self._url_root = "https://apiservice.borsdata.se/v1/"
         self._last_api_call = 0
         self._api_calls_per_second = 10
@@ -60,10 +68,10 @@ class BorsdataAPI:
         """
         if type(index) == list:
             for idx in index:
-                if not idx in df.columns.array:
+                if idx not in df.columns.array:
                     return
         else:
-            if not index in df.columns:
+            if index not in df.columns:
                 return
 
         df.set_index(index, inplace=True)
@@ -491,7 +499,7 @@ class BorsdataAPI:
 
 if __name__ == "__main__":
     # Main, call functions here.
-    api = BorsdataAPI(constants.API_KEY)
+    api = BorsdataAPI()
     api.get_translation_metadata()
     api.get_instruments_updated()
     api.get_kpi_summary(3, "year")
