@@ -1,2 +1,3 @@
 """constants.py"""
-EXPORT_PATH = 'file_exports/'
+
+EXPORT_PATH = r'C:/Users/gafza/PycharmProjects/BorsdataAPI/file_exports/'

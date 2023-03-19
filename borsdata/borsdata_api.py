@@ -8,7 +8,7 @@ import os
 
 # pandas options for string representation of data frames (print)
 pd.set_option("display.max_columns", None)
-pd.set_option("display.max_rows", None)
+# pd.set_option("display.max_rows", None)
 
 BORSDATA_API_KEY = os.environ.get('BORSDATA_API_KEY', None)
 
@@ -22,7 +22,7 @@ class BorsdataAPI:
         self._url_root = "https://apiservice.borsdata.se/v1/"
         self._last_api_call = 0
         self._api_calls_per_second = 10
-        self._params = {'authKey': self._api_key, 'maxYearCount': 20, 'maxR12QCount': 40, 'maxCount': 20}
+        self._params = {'authKey': self._api_key, 'maxYearCount': 40, 'maxR12QCount': 40, 'maxCount': 40}
 
     def _call_api(self, url, **kwargs):
         """
@@ -104,49 +104,67 @@ class BorsdataAPI:
     Instrument Metadata
     """
 
+    def store_meta_data_as_csv(self, meta_data_name: str = None):
+        """
+        Downloads meta data using API in DataFrame format and saves the result in a csv file
+        :param meta_data_name: str if not specified all meta data will be downloaded (and overwritten)
+        :return: None
+        """
+        # first download the relevant meta data
+        if meta_data_name:
+            meta_data_name = [meta_data_name]
+        else:
+            meta_data_name = ['branches', 'countries', 'markets', 'sectors']
+
+        # if path does not exist it will be created
+        meta_data_path = 'meta_data'
+        if not os.path.exists(meta_data_path):
+            os.makedirs(meta_data_path)
+
+        # for each meta data, download it and store it as a csv file
+        for meta in meta_data_name:
+            df = self._get_metadata(meta_data_name=meta)
+            df.to_csv(f'{meta_data_path}\\{meta}.csv')
+
+    def _get_metadata(self, meta_data_name: str):
+        """
+        Get data for the specified meta data e.g. 'industry'
+        :param: meta_data: str
+        :return: pd.DataFrame
+        """
+        url = meta_data_name
+        json_data = self._call_api(url)
+        df = pd.json_normalize(json_data[meta_data_name])
+        self._set_index(df, "id")
+        return df
+
     def get_branches(self):
         """
         Get branch data
         :return: pd.DataFrame
         """
-        url = "branches"
-        json_data = self._call_api(url)
-        df = pd.json_normalize(json_data["branches"])
-        self._set_index(df, "id")
-        return df
+        return self._get_metadata(meta_data_name='branches')
 
     def get_countries(self):
         """
         Get country data
         :return: pd.DataFrame
         """
-        url = "countries"
-        json_data = self._call_api(url)
-        df = pd.json_normalize(json_data["countries"])
-        self._set_index(df, "id")
-        return df
+        return self._get_metadata(meta_data_name='countries')
 
     def get_markets(self):
         """
         Get market data
         :return: pd.DataFrame
         """
-        url = "markets"
-        json_data = self._call_api(url)
-        df = pd.json_normalize(json_data["markets"])
-        self._set_index(df, "id")
-        return df
+        return self._get_metadata(meta_data_name='markets')
 
     def get_sectors(self):
         """
         Get sector data
         :return: pd.DataFrame
         """
-        url = "sectors"
-        json_data = self._call_api(url)
-        df = pd.json_normalize(json_data["sectors"])
-        self._set_index(df, "id")
-        return df
+        return self._get_metadata(meta_data_name='sectors')
 
     def get_translation_metadata(self):
         """
@@ -340,6 +358,33 @@ class BorsdataAPI:
             dfs.append(df)
         return dfs
 
+    def get_annual_reports(self, stock_id_list: list):
+        return self._get_instrument_reports(stock_id_list=stock_id_list, report_type='reportsYear')
+
+    def get_quarterly_reports(self, stock_id_list: list):
+        return self._get_instrument_reports(stock_id_list=stock_id_list, report_type='reportsQuarter')
+
+    def get_rolling_12_month_reports(self, stock_id_list: list):
+        return self._get_instrument_reports(stock_id_list=stock_id_list, report_type='reportsR12')
+
+    def _get_instrument_reports(self, stock_id_list: list, report_type: str):
+        """
+        Get all report data for Stocks in stock_id_list
+        :param stock_id_list: Instrument ID list
+        :param report_type: str
+        :return: [pd.DataFrame quarter, pd.DataFrame year, pd.DataFrame r12]
+        """
+        eligible_report_types = ['reportsR12', 'reportsQuarter', 'reportsYear']
+        if report_type not in eligible_report_types:
+            raise ValueError(f"report_type can only be '%s'" % "', '".join(eligible_report_types))
+        url = f"instruments/reports"
+        json_data = self._call_api(url, instList=stock_id_list)
+        res = pd.json_normalize(json_data['reportList'], record_path=report_type, meta=["instrument"])
+        res = res.rename(columns=str.lower)
+        res = res.rename(columns={'instrument': 'stock_id'})
+        res.fillna(0, inplace=True)
+        return res
+
     def get_instrument_report_list(self, stock_id_list):
         """
         Get all report data for Stocks in stock_id_list
@@ -500,16 +545,18 @@ class BorsdataAPI:
 if __name__ == "__main__":
     # Main, call functions here.
     api = BorsdataAPI()
-    api.get_translation_metadata()
-    api.get_instruments_updated()
-    api.get_kpi_summary(3, "year")
-    api.get_kpi_data_instrument(3, 10, '1year', 'mean')
-    api.get_kpi_data_all_instruments(10, '1year', 'mean')
-    api.get_updated_kpis()
-    api.get_kpi_metadata()
-    api.get_instrument_report(3, 'year')
-    api.get_reports_metadata()
-    api.get_stock_prices_date('2020-09-25')
-    api.get_stock_splits()
-    api.get_instrument_stock_prices(2, from_date="2022-01-01", to="2023-01-01")
-    api.get_instrument_stock_prices_list([2, 3, 4, 5])
+
+    # api.store_meta_data_as_csv()
+    # api.get_translation_metadata()
+    # api.get_instruments_updated()
+    # api.get_kpi_summary(3, "year")
+    # api.get_kpi_data_instrument(3, 10, '1year', 'mean')
+    # api.get_kpi_data_all_instruments(10, '1year', 'mean')
+    # api.get_updated_kpis()
+    # api.get_kpi_metadata()
+    # api.get_instrument_report(3, 'year')
+    # api.get_reports_metadata()
+    # api.get_stock_prices_date('2020-09-25')
+    # api.get_stock_splits()
+    # api.get_instrument_stock_prices(2, from_date="2022-01-01", to_date="2023-01-01")
+    # api.get_instrument_stock_prices_list([2, 3, 4, 5])

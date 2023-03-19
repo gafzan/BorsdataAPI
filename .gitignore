@@ -1,2 +1,6 @@
 borsdata/__pycache__
 .idea
+dev_notes.txt
+borsdata/meta_data/
+file_exports/
+borsdata/constants.py
