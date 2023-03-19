@@ -4,11 +4,13 @@ import pandas as pd  # pandas is a data-analysis library for python (data frames
 import numpy as np
 import matplotlib.pylab as plt  # matplotlib for visual-presentations (plots)
 import datetime as dt  # datetime for date- and time-stuff
+from dateutil.relativedelta import relativedelta
 
 import os
 
 from borsdata.borsdata_api import BorsdataAPI
 from borsdata import constants as constants  # user constants
+from borsdata.general_tools import list_grouper
 
 
 # pandas options for string representation of data frames (print)
@@ -20,6 +22,123 @@ class BorsdataClient:
     def __init__(self):
         self._borsdata_api = BorsdataAPI()
         self._instruments_with_meta_data = pd.DataFrame()
+
+    def get_fundamental_data(self, ins_id: {int, list}, reporting_item: {str, list}, report_type: str = 't12m',
+                             method_missing_report_date: str = 'estimate')->{pd.DataFrame, dict}:
+        """
+        Returns a DataFrame (or a dictionary of DataFrames if a list of reporting items have been provided) with a
+        specified reporting item for a given reporting type (yearly, quarterly or T12M)
+        :param ins_id: list of int
+        :param reporting_item: str or list of str
+        :param report_type: str or list of str
+        :param method_missing_report_date: str 'drop' will remove all rows where there is no report date. 'estimate'
+        will sett 'report_date' to 2 months after 'report_end_date'
+        :return: DataFrame or dict of DataFrames
+        """
+        # convert inputs to list
+        if not isinstance(ins_id, list):
+            ins_id = [ins_id]
+
+        pre_pivot_result_df = self._get_fundamental_data(ins_id=ins_id, report_type=report_type)
+
+        # handle missing report dates
+        pre_pivot_result_df = self.handle_missing_report_date(report_df=pre_pivot_result_df,
+                                                              method=method_missing_report_date)
+
+        # pivot the result
+        if isinstance(reporting_item, list):
+            # if a list of reporting items have been specified return a dictionary with the reporting item name as key
+            # and the result DataFrame as value
+            result = {}
+            for item in reporting_item:
+                if item not in pre_pivot_result_df.columns:
+                    raise ValueError(f"'{item}' is not a recognized report item\nChose from: '%s'" % "', '".join(pre_pivot_result_df.columns))
+                result[item] = pre_pivot_result_df.pivot_table(values=item, index='report_date', columns='stock_id', aggfunc='sum')
+            return result
+        else:
+            return pre_pivot_result_df.pivot_table(values=reporting_item, index='report_date', columns='stock_id', aggfunc='sum')
+
+    @staticmethod
+    def handle_missing_report_date(report_df: pd.DataFrame, method: str)->pd.DataFrame:
+        """
+        Returns a DataFrame that either drops the rows where 'report_date' is missing or replaces is with an estimated
+        date as two months after 'reporting_end_date'
+        :param report_df:
+        :param method:
+        :return:
+        """
+
+        if method.lower() == 'drop':
+            return report_df[~report_df['report_date'].isin([0, '1899-12-31T00:00:00'])].copy()
+        elif method.lower() == 'estimate':
+            # assume that the report date is 2 months after the ending period
+            months_after_end = 2
+            report_df['report_end_date'] = pd.to_datetime(report_df['report_end_date'])
+            index_missing_report_date = report_df[report_df['report_date'].isin([0, '1899-12-31T00:00:00'])].index
+            report_df.loc[index_missing_report_date, 'report_date'] = report_df.loc[index_missing_report_date, 'report_end_date'].apply(lambda x: x + relativedelta(months=months_after_end))
+            report_df['report_date'] = pd.to_datetime(report_df['report_date'])
+            return report_df
+        else:
+            raise ValueError(f"'{method}' is not a recongized method\nchose between 'drop' and 'estimate'")
+
+    def _get_fundamental_data(self, ins_id: list, report_type: str):
+        """
+        Returns a DataFrame with reporting items as columns for a specified reporting type (e.g. 'annual')
+        :param ins_id: list of int
+        :param report_type: str
+        :return: DataFrame
+        """
+        result_df = pd.DataFrame()  # initialize the result DataFrame
+        for ins_id_sub_list in list_grouper(ins_id, 50):  # max 50 instruments per call
+            # download the reporting data
+            if report_type.lower() in ['y', 'annual', '10k', '10-k', 'year', 'yearly']:
+                api_result_df = self._borsdata_api.get_annual_reports(stock_id_list=ins_id_sub_list)
+            elif report_type.lower() in ['q', 'quarterly', '10q', '10-q', 'quarter']:
+                api_result_df = self._borsdata_api.get_quarterly_reports(stock_id_list=ins_id_sub_list)
+            elif report_type.lower() in ['t12m', 'r12m']:
+                api_result_df = self._borsdata_api.get_rolling_12_month_reports(stock_id_list=ins_id_sub_list)
+            else:
+                raise ValueError(f"'{report_type}' is not a recognized report type")
+
+            # merge the result
+            result_df = pd.concat([result_df, api_result_df])
+
+        result_df.reset_index(drop=True, inplace=True)
+        return result_df
+
+    def instruments_with_meta_data_extended(self):
+        """
+        Returns a DataFrame with instrument id and extended meta data
+        A filter can be applied to the results
+        :return: DataFrame
+        """
+        # download the instruments and translation DataFrames
+        eng_to_swe_df = self._borsdata_api.get_translation_metadata()
+        instrument_df = self._borsdata_api.get_instruments()
+
+        # for each type of meta data, map the values to the corrsponding data id
+        meta_data_names_map = {'countries': 'country', 'branches': 'branch', 'sectors': 'sector', 'markets': 'market'}
+
+        for meta_data_name in meta_data_names_map.keys():
+            meta_df = self._borsdata_api._get_metadata(meta_data_name=meta_data_name)
+            meta_df.reset_index(inplace=True)
+            if meta_data_name == 'markets':
+                # special case with no need for translation and the name is a combination of the exchange name (e.g OMX
+                # Stockholm) and descriptive name (e.g. Small cap)
+                translate = False
+                meta_df[['name']] = meta_df[['exchangeName']] + ' ' + meta_df[['name']].values
+            else:
+                translate = True
+            if translate:
+                instrument_df[f'{meta_data_name}_name_swe'] = instrument_df[f'{meta_data_names_map[meta_data_name]}Id'].map(meta_df.set_index('id')['name'])
+                instrument_df[f'{meta_data_name}_name_eng'] = instrument_df[f'{meta_data_name}_name_swe'].map(eng_to_swe_df.set_index('nameSv')['nameEn'])
+            else:
+                instrument_df[f'{meta_data_name}_name'] = instrument_df[f'{meta_data_names_map[meta_data_name]}Id'].map(meta_df.set_index('id')['name'])
+        # map instrument type
+        ins_type_id_map = {0: 'Stock', 1: 'Pref', 2: 'Index', 3: 'Stocks2', 4: 'SectorIndex', 5: 'IndustryIndex',
+                           8: 'SPAC', 13: 'Index GI'}
+        instrument_df['instrument_type'] = instrument_df['instrument'].map(ins_type_id_map)
+        return instrument_df
 
     def instruments_with_meta_data(self):
         """
@@ -197,10 +316,12 @@ class BorsdataClient:
         # printing the name and calculated PE-ratio with the corresponding date. (array slicing, [:10])
         print(f"PE for {instrument_name} is {round(last_close / last_eps, 1)} with data from {str(last_date)[:10]}")
 
-    def breadth_large_cap_sweden(self):
+    def breadth_large_cap_sweden(self, sma_lag: int = 50):
         """
         plots the breadth (number of stocks above moving-average 40) for Large Cap Sweden compared
         to Large Cap Sweden Index
+        :param sma_lag: int
+        :return None
         """
         # creating api-object
         # using defined function above to retrieve data frame of all instruments
@@ -216,7 +337,7 @@ class BorsdataClient:
             instrument_stock_prices = self._borsdata_api.get_instrument_stock_prices(int(instrument['ins_id']))
             # using numpy's where function to create a 1 if close > ma40, else a 0
             instrument_stock_prices[f'above_ma40'] = np.where(
-                instrument_stock_prices['close'] > instrument_stock_prices['close'].rolling(window=40).mean(), 1, 0)
+                instrument_stock_prices['close'] > instrument_stock_prices['close'].rolling(window=sma_lag).mean(), 1, 0)
             instrument_stock_prices['name'] = instrument['name']
             # check to see if response holds any data.
             if len(instrument_stock_prices) > 0:
@@ -242,14 +363,32 @@ class BorsdataClient:
 
 
 if __name__ == "__main__":
+    from borsdata.general_tools import apply_column_filter
     # Main, call functions here.
     # creating BorsdataClient-instance
     borsdata_client = BorsdataClient()
-    # calling some methods
-    borsdata_client.breadth_large_cap_sweden()
-    borsdata_client.get_latest_pe(87)
-    borsdata_client.instruments_with_meta_data()
-    borsdata_client.plot_stock_prices(3)  # ABB
-    borsdata_client.history_kpi(2, 'Large Cap', 'Sverige', 2020)  # 2 == Price/Earnings (PE)
-    borsdata_client.top_performers('Large Cap', 'Sverige', 10,
-                                   5)  # showing top10 performers based on 5 day return (1 week) for Large Cap Sverige.
+    ins_df = borsdata_client.instruments_with_meta_data_extended()
+    selection_filter = {
+        'markets_name': ['omx stockholm large cap', 'omx stockholm mid cap', 'omx stockholm small cap'],
+        'instrument_type': 'stock',
+        'countries_name_eng': 'sweden'
+    }
+    ins_id = list(apply_column_filter(ins_df, selection_filter).index)
+    yahoo_tickers = ins_df.loc[ins_id]['yahoo'].values
+
+    eps_df = borsdata_client.get_fundamental_data(ins_id=ins_id, reporting_item='earnings_per_share')
+    eps_df.columns = yahoo_tickers
+    eps_df.to_clipboard()
+
+    # eps_df = borsdata_client.get_fundamental_data(ins_id=[3, 195], reporting_item=['earnings_per_share', 'revenues'])
+
+    # borsdata_client._borsdata_api.get_countries()
+
+    # # calling some methods
+    # borsdata_client.breadth_large_cap_sweden()
+    # borsdata_client.get_latest_pe(87)
+    # borsdata_client.instruments_with_meta_data()
+    # borsdata_client.plot_stock_prices(3)  # ABB
+    # borsdata_client.history_kpi(2, 'Large Cap', 'Sverige', 2020)  # 2 == Price/Earnings (PE)
+    # borsdata_client.top_performers('Large Cap', 'Sverige', 10,
+    #                                5)  # showing top10 performers based on 5 day return (1 week) for Large Cap Sverige.
